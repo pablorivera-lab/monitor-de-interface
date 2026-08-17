@@ -1,3 +1,6 @@
+![Monitor de Interfaz](monitor%20de%20interface.png)
+
+
 # **Monitor de Interfaz**
 
 Esta herramienta permite realizar un monitoreo rápido de la interfaz de red, facilitando la visualización del estado y la velocidad de la conexión mediante un script ligero y directo.
