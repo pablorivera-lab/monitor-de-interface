@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>LORENZ // GÉNESIS BIOLÓGICO CAÓTICO (CON AUDIO)</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;900&display=swap');
+        body { margin: 0; background: #000; color: #00f3ff; font-family: 'Orbitron', sans-serif; overflow: hidden; user-select: none; }
+        canvas { display: block; cursor: crosshair; }
+        .hud { position: absolute; top: 30px; left: 30px; pointer-events: none; border-left: 3px solid #00f3ff; padding-left: 20px; z-index: 10; }
+        .data-value { font-size: 32px; font-weight: 900; color: #fff; text-shadow: 0 0 10px #00f3ff; letter-spacing: 1px; }
+        
+        .ui-panel { position: absolute; top: 0; right: 0; height: 100vh; background: rgba(0, 10, 15, 0.95); padding: 20px; border-left: 1px solid #00f3ff; width: 320px; display: flex; flex-direction: column; transition: transform 0.4s cubic-bezier(0.19, 1, 0.22, 1); z-index: 100; box-sizing: border-box; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #00f3ff #000a0f; }
+        .ui-panel::-webkit-scrollbar { width: 6px; }
+        .ui-panel::-webkit-scrollbar-thumb { background: #00f3ff; border-radius: 3px; }
+        .ui-panel.hidden { transform: translateX(100%); }
+        
+        .handle { position: fixed; right: 0; top: 50%; transform: translateY(-50%); width: 35px; height: 90px; background: rgba(0, 243, 255, 0.25); border: 1px solid #00f3ff; border-right: none; display: flex; align-items: center; justify-content: center; cursor: pointer; color: #fff; font-weight: bold; border-radius: 8px 0 0 8px; z-index: 102; backdrop-filter: blur(4px); box-shadow: -2px 0 10px rgba(0,243,255,0.3); }
+        .handle:hover { background: rgba(0, 243, 255, 0.5); }
+        
+        .control-group { margin-top: 12px; font-size: 10px; letter-spacing: 1px; }
+        input[type="range"], input[type="number"] { width: 100%; margin-top: 4px; accent-color: #00f3ff; background: #00111a; color: #00f3ff; border: 1px solid #005566; padding: 4px; font-family: 'Orbitron'; font-size: 10px; box-sizing: border-box; }
+        select { background: black; color: #00f3ff; border: 1px solid #00f3ff; padding: 6px; font-family: 'Orbitron'; font-size: 10px; width: 100%; margin-top: 4px; outline: none; }
+        button { background: transparent; color: #00f3ff; border: 1px solid #00f3ff; padding: 8px; cursor: pointer; font-family: 'Orbitron'; font-size: 10px; width: 100%; margin-top: 6px; font-weight: 600; transition: all 0.2s; }
+        button:hover { background: rgba(0, 243, 255, 0.2); box-shadow: 0 0 8px rgba(0,243,255,0.4); }
+        .btn-start { background: rgba(0, 255, 128, 0.15); border-color: #00ff80; color: #00ff80; font-weight: 900; }
+        .btn-start:hover { background: rgba(0, 255, 128, 0.3); box-shadow: 0 0 10px rgba(0,255,128,0.5); }
+
+        .window-toggle-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 6px; }
+        .window-toggle-grid button { font-size: 8px; padding: 5px; margin: 0; }
+
+        .camera-list { margin-top: 15px; overflow-y: auto; flex-grow: 1; border-top: 1px solid #005566; padding-top: 10px; max-height: 160px; scrollbar-width: thin; scrollbar-color: #00f3ff #000a0f; }
+        .cam-btn { background: rgba(0, 243, 255, 0.1); border: 1px solid #00f3ff; color: #fff; padding: 6px; font-size: 9px; margin-bottom: 5px; text-align: left; display: flex; justify-content: space-between; align-items: center; cursor: pointer; width: 100%; }
+        .cam-btn.active { background: #00f3ff; color: #000; font-weight: bold; }
+
+        .monitor-box { position: absolute; width: 320px; background: rgba(2, 12, 20, 0.92); border: 1px solid #00f3ff; box-shadow: 0 0 20px rgba(0,243,255,0.15); border-radius: 6px; display: flex; flex-direction: column; z-index: 10; backdrop-filter: blur(5px); overflow: hidden; }
+        .monitor-box.hidden-window { display: none !important; }
+        .monitor-header { display: flex; justify-content: space-between; align-items: center; background: rgba(0, 243, 255, 0.08); border-bottom: 1px solid #00f3ff; padding: 8px 10px; cursor: grab; }
+        .monitor-header:active { cursor: grabbing; }
+        .monitor-title { font-weight: 900; color: #fff; font-size: 10px; letter-spacing: 1px; text-shadow: 0 0 5px rgba(0,243,255,0.5); }
+        
+        .window-controls { display: flex; gap: 4px; }
+        .window-controls button { width: 18px; height: 18px; padding: 0; margin: 0; font-size: 9px; font-weight: bold; display: inline-flex; align-items: center; justify-content: center; border-radius: 2px; }
+        
+        .monitor-body { padding: 10px; transition: max-height 0.3s ease; }
+        .monitor-content { line-height: 1.5; font-size: 9px; color: #c0f8ff; text-shadow: 0 0 4px rgba(0,243,255,0.3); max-height: 160px; overflow-y: auto; }
+        .monitor-box.minimized .monitor-body { display: none; }
+
+        .coord-box { position: absolute; border: 1px solid #00f3ff; background: rgba(0, 20, 30, 0.9); padding: 10px; font-size: 9px; color: #fff; pointer-events: none; box-shadow: 0 0 10px rgba(0, 243, 255, 0.4); display: none; z-index: 5; white-space: nowrap; }
+
+        .extinction-modal { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0, 0, 0, 0.85); display: none; align-items: center; justify-content: center; z-index: 1000; backdrop-filter: blur(8px); }
+        .extinction-content { width: 440px; background: rgba(10, 2, 4, 0.95); border: 2px solid #ff0055; box-shadow: 0 0 30px rgba(255,0,85,0.4); border-radius: 8px; padding: 25px; text-align: center; }
+        .extinction-title { font-size: 16px; font-weight: 900; color: #fff; background: #ff0055; padding: 10px; margin: -25px -25px 20px -25px; border-radius: 6px 6px 0 0; letter-spacing: 2px; text-shadow: 0 0 10px rgba(0,0,0,0.5); }
+        .extinction-body { font-size: 10px; line-height: 1.6; color: #ffc0cb; text-align: left; margin-bottom: 20px; }
+    </style>
+</head>
+<body>
+    <!-- Reproductor nativo de Pink Floyd -->
+    <audio id="bgAudio" src="Pink Floyd - On The Run.mp3" loop preload="auto"></audio>
+
+    <div class="handle" id="handle" onclick="toggleMenu()" title="Mostrar / Ocultar Menú">☰</div>
+
+    <div class="hud">
+        <div style="font-size: 10px; color: #88d0db; letter-spacing: 1px;">LÍNEAS VIVAS</div>
+        <div class="data-value" id="popCount">0</div>
+        <div style="font-size: 9px; color: #00f3ff; margin-top: 5px; letter-spacing: 0.5px;" id="civilizationAge">EDAD CIVILIZACIÓN: 0 años</div>
+    </div>
+
+    <!-- Ventana 1: Estadísticas Globales -->
+    <div class="monitor-box" id="windowStats" style="bottom: 20px; left: 20px;">
+        <div class="monitor-header" id="headerStats">
+            <span class="monitor-title">>>> ESTADÍSTICAS GLOBALES</span>
+            <div class="window-controls">
+                <button onclick="adjustFont('statsReport', -1)">-</button>
+                <button onclick="adjustFont('statsReport', 1)">+</button>
+                <button onclick="toggleMinimize('windowStats')">_</button>
+            </div>
+        </div>
+        <div class="monitor-body">
+            <div class="monitor-content" id="statsReport">
+                <div>Nacidos: 0 | Fallecidos: 0</div>
+                <div>Promedio Vida: 0 años</div>
+                <div>Vivas Actuales: 0</div>
+                <div>Estado: En pausa...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Ventana 2: Bitácora -->
+    <div class="monitor-box" id="windowExtreme" style="bottom: 20px; left: 355px;">
+        <div class="monitor-header" id="headerExtreme">
+            <span class="monitor-title">>>> BITÁCORA DE HÉROES Y CAÍDOS</span>
+            <div class="window-controls">
+                <button onclick="adjustFont('extremeReport', -1)">-</button>
+                <button onclick="adjustFont('extremeReport', 1)">+</button>
+                <button onclick="toggleMinimize('windowExtreme')">_</button>
+            </div>
+        </div>
+        <div class="monitor-body">
+            <div class="monitor-content" id="extremeReport">
+                <div><b>Más longeva:</b> Esperando registros...</div>
+                <div style="margin-top:6px;"><b>Más breve:</b> Esperando registros...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Ventana 3: Gráficos Poblacionales -->
+    <div class="monitor-box" id="windowGraph" style="bottom: 220px; left: 20px;">
+        <div class="monitor-header" id="headerGraph">
+            <span class="monitor-title">>>> TELEMETRÍA POBLACIONAL</span>
+            <div class="window-controls">
+                <button onclick="toggleMinimize('windowGraph')">_</button>
+            </div>
+        </div>
+        <div class="monitor-body" style="padding: 6px;">
+            <canvas id="statCanvas" width="300" height="90" style="display:block; width:100%; background:rgba(0,0,0,0.6); border:1px solid #005566;"></canvas>
+            <div style="font-size: 8px; color: #88d0db; margin-top: 4px; display: flex; justify-content: space-between;">
+                <span><b style="color:#00f3ff;">■</b> Población Activa</span>
+                <span><b style="color:#ff0055;">■</b> Historial Decesos</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Ventana 4: Genealogía -->
+    <div class="monitor-box" id="windowGen" style="bottom: 220px; left: 355px;">
+        <div class="monitor-header" id="headerGen">
+            <span class="monitor-title">>>> GENEALOGÍA Y HERENCIA</span>
+            <div class="window-controls">
+                <button onclick="adjustFont('genReport', -1)">-</button>
+                <button onclick="adjustFont('genReport', 1)">+</button>
+                <button onclick="toggleMinimize('windowGen')">_</button>
+            </div>
+        </div>
+        <div class="monitor-body">
+            <div class="monitor-content" id="genReport" style="max-height: 130px;">
+                <div>Esperando inicio del génesis...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Panel Lateral de Control -->
+    <div class="ui-panel" id="uiPanel">
+        <button onclick="toggleMenu()" style="background: rgba(255,0,85,0.15); border-color: #ff0055; color: #ff0055; margin-bottom: 10px;">OCULTAR MENÚ LATERAL [X]</button>
+        <button id="btnStart" class="btn-start">INICIAR GÉNESIS (START)</button>
+        
+        <div class="control-group" style="margin-top:10px;">
+            VISIBILIDAD DE VENTANAS:
+            <div class="window-toggle-grid">
+                <button onclick="toggleWindowVisibility('windowStats')" id="toggle_windowStats">Estadísticas</button>
+                <button onclick="toggleWindowVisibility('windowExtreme')" id="toggle_windowExtreme">Bitácora</button>
+                <button onclick="toggleWindowVisibility('windowGraph')" id="toggle_windowGraph">Telemetría</button>
+                <button onclick="toggleWindowVisibility('windowGen')" id="toggle_windowGen">Genealogía</button>
+            </div>
+        </div>
+
+        <div class="control-group">
+            VELOCIDAD SIMULACIÓN: <span id="speedVal" style="color:#fff; font-weight:bold;">0.005</span>
+            <input type="range" id="simSpeed" min="0.001" max="0.1" value="0.005" step="0.002" oninput="document.getElementById('speedVal').innerText = parseFloat(this.value).toFixed(3)">
+        </div>
+
+        <div class="control-group">
+            EDAD MÍNIMA REPRODUCCIÓN (AÑOS)
+            <input type="number" id="minBreedAge" value="18" min="1" max="100">
+        </div>
+
+        <div class="control-group">
+            EDAD MÁXIMA REPRODUCCIÓN (AÑOS)
+            <input type="number" id="maxBreedAge" value="55" min="5" max="120">
+        </div>
+
+        <div class="control-group">
+            MODO COLOR:
+            <select id="colorMode">
+                <option value="primario">PRIMARIOS NEÓN</option>
+                <option value="mestizaje">MESTIZAJE GENÉTICO</option>
+            </select>
+        </div>
+        <button id="btnToggleRot">ROTACIÓN AUTOMÁTICA: ON</button>
+        <button id="btnRandomCam">CÁMARA RANDOM (1ª PERSONA): OFF</button>
+        <button id="btnRandomZoom">ZOOM DINÁMICO: OFF</button>
+        <button id="btnReset">REINICIAR GÉNESIS</button>
+
+        <div style="margin-top: 12px; font-size: 10px; color: #00f3ff; font-weight: bold; letter-spacing: 1px;">CÁMARA // SEGUIMIENTO:</div>
+        <div class="camera-list" id="cameraList"></div>
+    </div>
+
+    <!-- Modal Extinción -->
+    <div class="extinction-modal" id="extinctionModal">
+        <div class="extinction-content">
+            <div class="extinction-title">FIN DE LA CIVILIZACIÓN</div>
+            <div class="extinction-body" id="extinctionText">
+                Calculando datos finales...
+            </div>
+            <button onclick="resetFromModal()" style="background: rgba(255,0,85,0.2); border-color: #ff0055; color: #fff; font-weight: bold;">INICIAR NUEVA SIMULACIÓN</button>
+        </div>
+    </div>
+
+    <div class="coord-box" id="coordBox"></div>
+    <canvas id="canvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const statCanvas = document.getElementById('statCanvas');
+        const sCtx = statCanvas.getContext('2d');
+        const bgAudio = document.getElementById('bgAudio');
+
+        let width, height, rotX = 0.5, rotY = 0.5, zoom = 14;
+        let targetZoom = 14;
+        let isDragging = false, lastMouse = {x:0, y:0};
+        let autoRotate = true, lines = [], nextId = 1;
+        let targetedLineId = 'free';
+        let isRunning = false;
+        let extinctionTriggered = false;
+
+        let randomCamActive = false;
+        let randomCamTimer = null;
+        let randomZoomActive = false;
+
+        let totalBorn = 0;
+        let totalDied = 0;
+        let accumulatedLifeTicks = 0;
+        let civilizationAccumulator = 0;
+        let longestLine = null;  
+        let shortestLine = null; 
+        let recentDeathInfo = null;
+
+        let populationHistory = [];
+        let deathRateHistory = [];
+        let lineageLog = [];
+
+        const uiPanel = document.getElementById('uiPanel');
+        const coordBox = document.getElementById('coordBox');
+
+        window.toggleMenu = function() {
+            uiPanel.classList.toggle('hidden');
+        }
+
+        window.toggleWindowVisibility = function(windowId) {
+            let win = document.getElementById(windowId);
+            let btn = document.getElementById('toggle_' + windowId);
+            win.classList.toggle('hidden-window');
+            let isHidden = win.classList.contains('hidden-window');
+            btn.style.opacity = isHidden ? '0.4' : '1';
+            btn.style.borderColor = isHidden ? '#005566' : '#00f3ff';
+        }
+
+        window.onwheel = (e) => { 
+            zoom = Math.min(Math.max(zoom - e.deltaY * 0.05, 2), 300); 
+            targetZoom = zoom;
+        };
+        
+        function resize() { width = canvas.width = window.innerWidth; height = canvas.height = window.innerHeight; }
+        window.onresize = resize; resize();
+
+        function makeDraggable(elmnt, header) {
+            let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
+            header.onmousedown = dragMouseDown;
+            function dragMouseDown(e) {
+                if(e.target.tagName === 'BUTTON') return;
+                e.preventDefault();
+                pos3 = e.clientX; pos4 = e.clientY;
+                document.onmouseup = closeDragElement;
+                document.onmousemove = elementDrag;
+            }
+            function elementDrag(e) {
+                e.preventDefault();
+                pos1 = pos3 - e.clientX; pos2 = pos4 - e.clientY;
+                pos3 = e.clientX; pos4 = e.clientY;
+                elmnt.style.top = (elmnt.offsetTop - pos2) + "px";
+                elmnt.style.left = (elmnt.offsetLeft - pos1) + "px";
+            }
+            function closeDragElement() {
+                document.onmouseup = null; document.onmousemove = null;
+            }
+        }
+        makeDraggable(document.getElementById("windowStats"), document.getElementById("headerStats"));
+        makeDraggable(document.getElementById("windowExtreme"), document.getElementById("headerExtreme"));
+        makeDraggable(document.getElementById("windowGraph"), document.getElementById("headerGraph"));
+        makeDraggable(document.getElementById("windowGen"), document.getElementById("headerGen"));
+
+        window.toggleMinimize = function(windowId) {
+            document.getElementById(windowId).classList.toggle('minimized');
+        }
+
+        window.adjustFont = function(elementId, change) {
+            let el = document.getElementById(elementId);
+            let currentSize = parseInt(window.getComputedStyle(el).fontSize);
+            let newSize = Math.max(8, Math.min(16, currentSize + change));
+            el.style.fontSize = newSize + 'px';
+        }
+
+        function getPrimaryColor() { return ['#FF0000', '#00FF00', '#0000FF', '#FFFF00', '#FF00FF', '#00FFFF'][Math.floor(Math.random()*6)]; }
+        function mixColors(c1, c2) {
+            let rgb1 = c1.match(/\w\w/g).map(x => parseInt(x, 16)), rgb2 = c2.match(/\w\w/g).map(x => parseInt(x, 16));
+            return '#' + rgb1.map((v, i) => Math.floor((v + rgb2[i]) / 2).toString(16).padStart(2, '0')).join('');
+        }
+
+        class LorenzLine {
+            constructor(x, y, z, color, parentInfo = null) {
+                this.id = nextId++;
+                this.startX = x; this.startY = y; this.startZ = z;
+                this.x = x; this.y = y; this.z = z;
+                this.color = color;
+                this.history = [{x, y, z}];
+                this.ageTicks = 0;
+                this.parentInfo = parentInfo;
+                
+                this.maxOffspring = Math.floor(1 + Math.random() * 5);
+                this.childrenCount = 0;
+                this.lastChildAge = -99;
+                
+                totalBorn++;
+            }
+            
+            getHumanAge() { return Math.floor(this.ageTicks / 3500); }
+
+            update(speedFactor) {
+                let dx = 10 * (this.y - this.x), dy = this.x * (28 - this.z) - this.y, dz = this.x * this.y - (8/3) * this.z;
+                let adjustedSpeed = speedFactor * 0.8;
+                this.x += dx * adjustedSpeed; this.y += dy * adjustedSpeed; this.z += dz * adjustedSpeed;
+                this.history.push({x: this.x, y: this.y, z: this.z});
+                if(this.history.length > 800) this.history.shift();
+                this.ageTicks += speedFactor * 10000;
+            }
+
+            isDead(speedFactor) {
+                let humanAge = this.getHumanAge();
+                let baseRisk = 0.00005;
+                let agingRisk = Math.pow(humanAge / 78, 5) * 0.003;
+                return Math.random() < ((baseRisk + agingRisk) * (speedFactor / 0.005));
+            }
+        }
+
+        function registerDeath(line) {
+            totalDied++;
+            accumulatedLifeTicks += line.ageTicks;
+            let humanAge = line.getHumanAge();
+
+            let deathData = {
+                id: line.id,
+                humanAge: humanAge,
+                birth: { x: line.startX, y: line.startY, z: line.startZ },
+                death: { x: line.x, y: line.y, z: line.z },
+                rawTicks: line.ageTicks
+            };
+
+            if (targetedLineId === line.id) {
+                recentDeathInfo = deathData;
+                if(randomCamActive) pickRandomCamera();
+            }
+
+            if (!longestLine || line.ageTicks > longestLine.rawTicks) longestLine = deathData;
+            if (!shortestLine || line.ageTicks < shortestLine.rawTicks) shortestLine = deathData;
+
+            updateReports();
+        }
+
+        function updateReports() {
+            let avgLifeHuman = totalDied > 0 ? Math.floor((accumulatedLifeTicks / totalDied) / 3500) : 0;
+            let civilAgeYears = Math.floor(civilizationAccumulator / 3500);
+
+            document.getElementById('civilizationAge').innerText = `EDAD CIVILIZACIÓN: ${civilAgeYears} años`;
+
+            document.getElementById('statsReport').innerHTML = `
+                <div>Nacidos: <b>${totalBorn}</b> | Fallecidos: <b>${totalDied}</b></div>
+                <div>Promedio Vida: <b>${avgLifeHuman} años</b></div>
+                <div>Vivas Actuales: <b>${lines.length}</b></div>
+                <div>Estado: ${isRunning ? 'Biología Activa' : 'En pausa'}</div>
+            `;
+
+            let longestHTML = longestLine ? 
+                `#${longestLine.id} (${longestLine.humanAge} a.)<br>Nac: X:${longestLine.birth.x.toFixed(1)} Y:${longestLine.birth.y.toFixed(1)} Z:${longestLine.birth.z.toFixed(1)}` : 'Esperando registros...';
+
+            let shortestHTML = shortestLine ? 
+                `#${shortestLine.id} (${shortestLine.humanAge} a.)<br>Nac: X:${shortestLine.birth.x.toFixed(1)} Y:${shortestLine.birth.y.toFixed(1)} Z:${shortestLine.birth.z.toFixed(1)}` : 'Esperando registros...';
+
+            document.getElementById('extremeReport').innerHTML = `
+                <div><b>Más longeva:</b><br>${longestHTML}</div>
+                <div style="margin-top:6px;"><b>Más breve:</b><br>${shortestHTML}</div>
+            `;
+
+            let genHTML = lineageLog.slice(-5).reverse().map(item => `
+                <div style="border-bottom:1px dashed #005566; padding-bottom:3px; margin-bottom:3px;">
+                    <b>Nuevo #${item.childId}</b> heredó de <b>#${item.parentId}</b><br>
+                    Edad Progenitor: <b>${item.parentAge} años</b> (Límite max: ${item.maxCap} hijos)<br>
+                    Coords: X:${item.coordX.toFixed(1)} Y:${item.coordY.toFixed(1)} Z:${item.coordZ.toFixed(1)}
+                </div>
+            `).join('');
+            document.getElementById('genReport').innerHTML = genHTML || '<div>Esperando cruces...</div>';
+        }
+
+        function drawStatisticsGraph() {
+            sCtx.clearRect(0, 0, statCanvas.width, statCanvas.height);
+            sCtx.strokeStyle = 'rgba(0, 85, 102, 0.3)';
+            sCtx.lineWidth = 1;
+            sCtx.beginPath();
+            sCtx.moveTo(0, 22); sCtx.lineTo(300, 22);
+            sCtx.moveTo(0, 45); sCtx.lineTo(300, 45);
+            sCtx.moveTo(0, 67); sCtx.lineTo(300, 67);
+            sCtx.stroke();
+
+            let stepX = statCanvas.width / 50;
+
+            if(populationHistory.length > 1) {
+                sCtx.strokeStyle = '#00f3ff';
+                sCtx.lineWidth = 1.5;
+                sCtx.beginPath();
+                populationHistory.forEach((val, i) => {
+                    let x = i * stepX;
+                    let y = statCanvas.height - (val / 40) * statCanvas.height;
+                    i === 0 ? sCtx.moveTo(x, y) : sCtx.lineTo(x, y);
+                });
+                sCtx.stroke();
+            }
+
+            if(deathRateHistory.length > 1) {
+                sCtx.strokeStyle = '#ff0055';
+                sCtx.lineWidth = 1.5;
+                sCtx.beginPath();
+                deathRateHistory.forEach((val, i) => {
+                    let x = i * stepX;
+                    let y = statCanvas.height - (val / 10) * statCanvas.height;
+                    i === 0 ? sCtx.moveTo(x, y) : sCtx.lineTo(x, y);
+                });
+                sCtx.stroke();
+            }
+        }
+
+        function pickRandomCamera() {
+            if (lines.length > 0) {
+                let randomLine = lines[Math.floor(Math.random() * lines.length)];
+                setCamera(randomLine.id);
+            } else {
+                setCamera('free');
+            }
+        }
+
+        function init() { 
+            lines = [new LorenzLine(1, 1, 20, '#FF0033', null)]; 
+            nextId = 1; targetedLineId = 'free'; 
+            totalBorn = 1; totalDied = 0; accumulatedLifeTicks = 0; civilizationAccumulator = 0;
+            longestLine = null; shortestLine = null; recentDeathInfo = null;
+            populationHistory = []; deathRateHistory = []; lineageLog = [];
+            isRunning = false; extinctionTriggered = false;
+            
+            if(randomCamTimer) clearInterval(randomCamTimer);
+            randomCamActive = false;
+            document.getElementById('btnRandomCam').innerText = 'CÁMARA RANDOM (1ª PERSONA): OFF';
+            document.getElementById('btnRandomCam').style.color = '#00f3ff';
+
+            randomZoomActive = false;
+            document.getElementById('btnRandomZoom').innerText = 'ZOOM DINÁMICO: OFF';
+            document.getElementById('btnRandomZoom').style.color = '#00f3ff';
+            zoom = 14; targetZoom = 14;
+
+            bgAudio.pause();
+            bgAudio.currentTime = 0;
+            document.getElementById('extinctionModal').style.display = 'none';
+            document.getElementById('btnStart').innerText = "INICIAR GÉNESIS (START)";
+            document.getElementById('btnStart').style.borderColor = "#00ff80";
+            document.getElementById('btnStart').style.color = "#00ff80";
+            updateReports();
+            updateCameraList(); 
+        }
+
+        function triggerExtinction() {
+            isRunning = false;
+            extinctionTriggered = true;
+            bgAudio.pause();
+            let finalCivAge = Math.floor(civilizationAccumulator / 3500);
+            let avgLifeHuman = totalDied > 0 ? Math.floor((accumulatedLifeTicks / totalDied) / 3500) : 0;
+            
+            let longestStr = longestLine ? `#${longestLine.id} (${longestLine.humanAge} años)` : 'Ninguna';
+            let shortestStr = shortestLine ? `#${shortestLine.id} (${shortestLine.humanAge} años)` : 'Ninguna';
+
+            let html = `
+                <div><b>Primer vida (#1):</b> Nacida en X:1.0, Y:1.0, Z:20.0</div>
+                <div><b>Duración total:</b> ${finalCivAge} años de evolución.</div>
+                <div><b>Año de finalización:</b> Año ${finalCivAge} (Extinción total).</div>
+                <div><b>Total de nacimientos:</b> ${totalBorn} líneas generadas.</div>
+                <div><b>Promedio de vida general:</b> ${avgLifeHuman} años.</div>
+                <div style="margin-top:4px; border-top:1px dashed #ff0055; padding-top:4px;"><b>Récord Longevidad:</b> ${longestStr}</div>
+                <div><b>Vida más breve:</b> ${shortestStr}</div>
+                <div style="margin-top:8px; color:#ff0055; font-weight:bold; text-align:center;">--- CICLO BIOLÓGICO CONCLUIDO ---</div>
+            `;
+            document.getElementById('extinctionText').innerHTML = html;
+            document.getElementById('extinctionModal').style.display = 'flex';
+        }
+
+        window.resetFromModal = function() { init(); }
+
+        canvas.onmousedown = (e) => { 
+            if(e.target === canvas) { 
+                isDragging = true; 
+                lastMouse = {x: e.clientX, y: e.clientY}; 
+            } 
+        };
+        window.onmouseup = () => isDragging = false;
+        window.onmousemove = (e) => { 
+            if(isDragging) { 
+                rotY += (e.clientX - lastMouse.x) * 0.01; 
+                rotX += (e.clientY - lastMouse.y) * 0.01; 
+                lastMouse = {x: e.clientX, y: e.clientY}; 
+            } 
+        };
+
+        window.setCamera = function(id) { 
+            targetedLineId = id; 
+            recentDeathInfo = null; 
+            updateCameraList(); 
+        }
+
+        function updateCameraList() {
+            const listEl = document.getElementById('cameraList');
+            let html = `<button class="cam-btn ${targetedLineId === 'free' ? 'active' : ''}" onclick="setCamera('free')">>>> VISTA GLOBAL</button>`;
+            lines.forEach(l => {
+                let humanAge = l.getHumanAge();
+                html += `<button class="cam-btn ${targetedLineId === l.id ? 'active' : ''}" onclick="setCamera(${l.id})">LÍNEA #${l.id} <b>${humanAge}a</b></button>`;
+            });
+            listEl.innerHTML = html;
+        }
+
+        let frameCounter = 0;
+
+        function draw() {
+            ctx.fillStyle = '#000'; ctx.fillRect(0, 0, width, height);
+            
+            if(autoRotate) rotY += 0.002;
+
+            if (randomZoomActive && isRunning) {
+                if (Math.random() < 0.015) {
+                    targetZoom = 8 + Math.random() * 26;
+                }
+                zoom += (targetZoom - zoom) * 0.02;
+            }
+
+            let speed = parseFloat(document.getElementById('simSpeed').value);
+            let mode = document.getElementById('colorMode').value;
+            let minBreedAge = parseInt(document.getElementById('minBreedAge').value) || 18;
+            let maxBreedAge = parseInt(document.getElementById('maxBreedAge').value) || 55;
+
+            if (isRunning) {
+                civilizationAccumulator += speed * 10000;
+
+                if (lines.length < 50 && lines.length > 0) {
+                    lines.forEach(parent => {
+                        let currentAge = parent.getHumanAge();
+                        if (currentAge >= minBreedAge && currentAge <= maxBreedAge && parent.childrenCount < parent.maxOffspring && (currentAge - parent.lastChildAge) >= 3) {
+                            if (Math.random() < 0.08) {
+                                let partner = lines[Math.floor(Math.random() * lines.length)];
+                                let color = (mode === 'primario') ? getPrimaryColor() : mixColors(parent.color, partner.color);
+                                
+                                let newX = parent.x;
+                                let newY = parent.y;
+                                let newZ = partner.history[0] ? partner.history[0].z : 20;
+
+                                let child = new LorenzLine(newX, newY, newZ, color, { parentId: parent.id, parentAge: currentAge });
+
+                                lineageLog.push({
+                                    childId: child.id, parentId: parent.id, parentAge: currentAge,
+                                    maxCap: parent.maxOffspring, coordX: newX, coordY: newY, coordZ: newZ
+                                });
+                                if(lineageLog.length > 20) lineageLog.shift();
+
+                                lines.push(child);
+                                parent.childrenCount++;
+                                parent.lastChildAge = currentAge;
+                                updateCameraList();
+                            }
+                        }
+                    });
+                }
+
+                lines.forEach(l => l.update(speed));
+
+                let currentDeathsThisTick = 0;
+                let surviving = [];
+                lines.forEach(l => {
+                    if (l.isDead(speed)) {
+                        registerDeath(l);
+                        currentDeathsThisTick++;
+                    } else {
+                        surviving.push(l);
+                    }
+                });
+                lines = surviving;
+
+                if (lines.length === 0 && !extinctionTriggered) {
+                    triggerExtinction();
+                }
+                
+                frameCounter++;
+                if(frameCounter % 15 === 0) {
+                    populationHistory.push(lines.length);
+                    if(populationHistory.length > 50) populationHistory.shift();
+                    
+                    deathRateHistory.push(currentDeathsThisTick * 3);
+                    if(deathRateHistory.length > 50) deathRateHistory.shift();
+
+                    updateReports();
+                    drawStatisticsGraph();
+                }
+            }
+
+            let target = lines.find(l => l.id === targetedLineId);
+            let targetCam = target ? {x:target.x, y:target.y, z:target.z} : {x:0, y:0, z:25};
+
+            lines.forEach(e => {
+                ctx.beginPath(); ctx.strokeStyle = e.color; ctx.lineWidth = (e.id === targetedLineId) ? 2.5 : 1.2;
+                e.history.forEach((pt, i) => {
+                    let ox = pt.x - targetCam.x, oy = pt.y - targetCam.y, oz = pt.z - targetCam.z;
+                    let x = ox * Math.cos(rotY) + oz * Math.sin(rotY);
+                    let z = -ox * Math.sin(rotY) + oz * Math.cos(rotY);
+                    let y = oy * Math.cos(rotX) - z * Math.sin(rotX);
+                    let sx = width/2 + x * zoom, sy = height/2 + y * zoom;
+                    let humanAge = e.getHumanAge();
+                    i === 0 ? ctx.moveTo(sx, sy) : ctx.lineTo(sx, sy);
+                    if(e === target && i === e.history.length - 1) {
+                        coordBox.style.display = 'block'; coordBox.style.left = (sx + 20) + 'px'; coordBox.style.top = (sy - 20) + 'px';
+                        coordBox.innerHTML = `<div style="color:${e.color}; font-weight:bold;">LÍNEA #${e.id}</div>
+                        <div>Edad: ${humanAge} años (Hijos: ${e.childrenCount}/${e.maxOffspring})</div>
+                        <div>X: ${e.x.toFixed(2)} | Y: ${e.y.toFixed(2)} | Z: ${e.z.toFixed(2)}</div>`;
+                    }
+                });
+                ctx.stroke();
+            });
+
+            if (!target && targetedLineId !== 'free' && recentDeathInfo) {
+                coordBox.style.display = 'block';
+                coordBox.style.left = (width / 2 - 120) + 'px';
+                coordBox.style.top = (height / 2 - 40) + 'px';
+                coordBox.innerHTML = `
+                    <div style="background: #ff0055; color: #fff; font-weight: 900; padding: 4px 8px; text-align: center; border-radius: 3px 3px 0 0; font-size: 10px;">MUERTO (LÍNEA #${recentDeathInfo.id})</div>
+                    <div style="padding: 6px; background: rgba(20,0,5,0.95); font-size: 9px; line-height: 1.6;">
+                        <div><b>Edad al morir:</b> ${recentDeathInfo.humanAge} años</div>
+                        <div><b>Nació en:</b> X:${recentDeathInfo.birth.x.toFixed(1)} Y:${recentDeathInfo.birth.y.toFixed(1)} Z:${recentDeathInfo.birth.z.toFixed(1)}</div>
+                        <div><b>Murió en:</b> X:${recentDeathInfo.death.x.toFixed(1)} Y:${recentDeathInfo.death.y.toFixed(1)} Z:${recentDeathInfo.death.z.toFixed(1)}</div>
+                    </div>
+                `;
+            } else if (targetedLineId === 'free') {
+                coordBox.style.display = 'none';
+            }
+
+            document.getElementById('popCount').innerText = lines.length;
+            requestAnimationFrame(draw);
+        }
+
+        document.getElementById('btnStart').onclick = () => {
+            if (extinctionTriggered) return;
+            let btn = document.getElementById('btnStart');
+            if(!isRunning) {
+                isRunning = true;
+                btn.innerText = "PAUSAR GÉNESIS (PAUSE)";
+                btn.style.borderColor = "#ff0055";
+                btn.style.color = "#ff0055";
+                bgAudio.play().catch(e => console.log("Reproducción bloqueada:", e));
+            } else {
+                isRunning = false;
+                btn.innerText = "INICIAR GÉNESIS (START)";
+                btn.style.borderColor = "#00ff80";
+                btn.style.color = "#00ff80";
+                bgAudio.pause();
+            }
+        };
+
+        document.getElementById('btnToggleRot').onclick = () => { 
+            autoRotate = !autoRotate; 
+            let btn = document.getElementById('btnToggleRot');
+            btn.innerText = `ROTACIÓN AUTOMÁTICA: ${autoRotate ? 'ON' : 'OFF'}`;
+            btn.style.color = autoRotate ? '#00f3ff' : '#888';
+        };
+
+        document.getElementById('btnRandomCam').onclick = () => {
+            randomCamActive = !randomCamActive;
+            let btn = document.getElementById('btnRandomCam');
+            btn.innerText = `CÁMARA RANDOM (1ª PERSONA): ${randomCamActive ? 'ON' : 'OFF'}`;
+            btn.style.color = randomCamActive ? '#00ff80' : '#00f3ff';
+
+            if(randomCamActive) {
+                pickRandomCamera();
+                randomCamTimer = setInterval(pickRandomCamera, 4000);
+            } else {
+                if(randomCamTimer) clearInterval(randomCamTimer);
+            }
+        };
+
+        document.getElementById('btnRandomZoom').onclick = () => {
+            randomZoomActive = !randomZoomActive;
+            let btn = document.getElementById('btnRandomZoom');
+            btn.innerText = `ZOOM DINÁMICO: ${randomZoomActive ? 'ON' : 'OFF'}`;
+            btn.style.color = randomZoomActive ? '#00ff80' : '#00f3ff';
+        };
+
+        document.getElementById('btnReset').onclick = init;
+        init(); draw();
+    </script>
+</body>
+</html>
