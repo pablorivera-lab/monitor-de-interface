@@ -12,7 +12,7 @@ if ($portActive) {
 
 $listener = New-Object System.Net.HttpListener
 
-# Uso preferente de localhost/127.0.0.1 para evitar acoplamientos rígidos en HTTP.sys (PID 4)
+# Uso de localhost/127.0.0.1 para evitar acoplamientos rígidos en HTTP.sys (PID 4)
 $listener.Prefixes.Add("http://localhost:${port}/")
 $listener.Prefixes.Add("http://127.0.0.1:${port}/")
 
