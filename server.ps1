@@ -60,11 +60,16 @@ if (-not (Test-Path $ipFilePath)) {
 }
 
 $global:CurrentIfaceName = ""
+$global:CurrentIfaceIndex = -1
 $global:RxMbps = 0.0
 $global:LinkSpeed = "N/A"
 $global:IsConnected = $false
 $global:HasInternet = $false
 $global:IsIdentifying = $false
+$global:IdentifyUntil = $null
+$global:PingTimeoutEpisode = $false
+$global:PingTTL = -1
+$global:InternetCheckAt = [DateTime]::MinValue
 $global:PrevBytes = 0
 $global:PrevTime = [DateTime]::Now
 
@@ -72,14 +77,89 @@ $global:PingTarget = "8.8.8.8"
 $global:PingTimeMs = -1
 $global:PingJob = $null
 
+
+function Test-InterfaceInternet {
+    param([System.Net.NetworkInformation.NetworkInterface]$Nic)
+
+    if (-not $Nic -or $Nic.OperationalStatus -ne [System.Net.NetworkInformation.OperationalStatus]::Up) {
+        return $false
+    }
+
+    try {
+        $props = $Nic.GetIPProperties()
+        $source = $props.UnicastAddresses |
+            Where-Object {
+                $_.Address.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork -and
+                -not $_.Address.ToString().StartsWith("169.254.")
+            } |
+            Select-Object -First 1
+
+        if (-not $source) { return $false }
+
+        $client = New-Object System.Net.Sockets.TcpClient
+        $client.ReceiveTimeout = 1500
+        $client.SendTimeout = 1500
+        $client.Client.Bind((New-Object System.Net.IPEndPoint -ArgumentList $source.Address, 0))
+        $iar = $client.BeginConnect("1.1.1.1", 443, $null, $null)
+        $connected = $iar.AsyncWaitHandle.WaitOne(1500, $false)
+
+        if ($connected -and $client.Connected) {
+            try { $client.EndConnect($iar) } catch {}
+            $client.Close()
+            return $true
+        }
+
+        $client.Close()
+        return $false
+    } catch {
+        try { if ($client) { $client.Close() } } catch {}
+        return $false
+    }
+}
+
 function Fast-Update-Metrics {
     if (-not $global:CurrentIfaceName) { return }
 
     $allIfaces = [System.Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces()
-    $nic = $allIfaces | Where-Object { $_.Name -eq $global:CurrentIfaceName }
+
+    # CurrentIfaceName es el nombre visible de "Conexiones de red"
+    # (NetConnectionID), mientras que NetworkInterface.Name puede ser
+    # distinto para adaptadores virtuales. Usamos InterfaceIndex para
+    # vincular ambos correctamente.
+    $nic = $null
+    if ($global:CurrentIfaceIndex -ge 0) {
+        $nic = $allIfaces | Where-Object {
+            try { $_.GetIPProperties().GetIPv4Properties().Index -eq $global:CurrentIfaceIndex }
+            catch { $false }
+        } | Select-Object -First 1
+    }
+
+    if (-not $nic -and $global:CurrentIfaceName) {
+        $adapter = Get-CimInstance Win32_NetworkAdapter -ErrorAction SilentlyContinue |
+            Where-Object { $_.NetConnectionID -eq $global:CurrentIfaceName } |
+            Select-Object -First 1
+
+        if ($adapter) {
+            $global:CurrentIfaceIndex = [int]$adapter.InterfaceIndex
+            $nic = $allIfaces | Where-Object {
+                try { $_.GetIPProperties().GetIPv4Properties().Index -eq $global:CurrentIfaceIndex }
+                catch { $false }
+            } | Select-Object -First 1
+        }
+    }
 
     if ($nic) {
         $global:IsConnected = ($nic.OperationalStatus -eq [System.Net.NetworkInformation.OperationalStatus]::Up)
+
+        # Estado de Internet: independiente del PingTarget.
+        # Se comprueba periódicamente usando la IP de la interfaz elegida.
+        if (-not $global:IsConnected) {
+            $global:HasInternet = $false
+            $global:InternetCheckAt = [DateTime]::MinValue
+        } elseif (([DateTime]::Now - $global:InternetCheckAt).TotalSeconds -ge 5) {
+            $global:HasInternet = Test-InterfaceInternet -Nic $nic
+            $global:InternetCheckAt = [DateTime]::Now
+        }
 
         if ($global:IsConnected) {
             $speedBps = $nic.Speed
@@ -123,6 +203,9 @@ function Fast-Update-Metrics {
             $global:IsIdentifying = $false
             $global:HasInternet = $false
             $global:PingTimeMs = -1
+            $global:PingTTL = -1
+            $global:IdentifyUntil = $null
+            $global:PingTimeoutEpisode = $false
             return
         }
 
@@ -132,25 +215,60 @@ function Fast-Update-Metrics {
                 Remove-Job -Job $global:PingJob -ErrorAction SilentlyContinue
                 $global:PingJob = $null
 
-                if ($res -and $res.ResponseTime -ne $null) {
-                    $global:PingTimeMs = $res.ResponseTime
-                    $global:HasInternet = $true
+                if ($res -and $res.Status -eq 'Success') {
+                    # Respuesta recibida: NO mostrar "Aguarde" ni cuenta regresiva.
+                    $global:PingTimeMs = [int]$res.ResponseTime
+                    $global:PingTTL = if ($res.TTL -ne $null) { [int]$res.TTL } else { -1 }
                     $global:IsIdentifying = $false
+                    $global:IdentifyUntil = $null
+                    $global:PingTimeoutEpisode = $false
                 } else {
+                    # Timeout: mostrar "Aguarde" y comenzar la cuenta de 10 s.
                     $global:PingTimeMs = -1
-                    $global:HasInternet = $false
-                    $global:IsIdentifying = $true
+                    $global:PingTTL = -1
+                    if (-not $global:PingTimeoutEpisode) {
+                        $global:IdentifyUntil = [DateTime]::Now.AddSeconds(10)
+                        $global:PingTimeoutEpisode = $true
+                    }
+                    $global:IsIdentifying = ($null -ne $global:IdentifyUntil -and $global:IdentifyUntil -gt [DateTime]::Now)
                 }
             } elseif ($global:PingJob.State -eq 'Failed' -or $global:PingJob.State -eq 'Stopped') {
                 Remove-Job -Job $global:PingJob -Force -ErrorAction SilentlyContinue
                 $global:PingJob = $null
                 $global:PingTimeMs = -1
-                $global:HasInternet = $false
+                $global:PingTTL = -1
+                if ($null -eq $global:IdentifyUntil) {
+                    $global:IdentifyUntil = [DateTime]::Now.AddSeconds(10)
+                }
                 $global:IsIdentifying = $true
             }
         } else {
             $target = if ($global:PingTarget) { $global:PingTarget } else { "8.8.8.8" }
-            $global:PingJob = Test-Connection -ComputerName $target -Count 1 -BufferSize 32 -AsJob -ErrorAction SilentlyContinue
+
+            # Ping continuo: cada job realiza UN ping y luego se lanza el siguiente.
+            # El ping no se detiene al recibir respuesta.
+            $global:PingJob = Start-Job -ArgumentList $target -ScriptBlock {
+                param($targetIp)
+                try {
+                    $p = New-Object System.Net.NetworkInformation.Ping
+                    $reply = $p.Send($targetIp, 1000, (New-Object byte[] 32))
+                    $ttl = -1
+                    if ($reply.Options -and $reply.Options.Ttl) {
+                        $ttl = [int]$reply.Options.Ttl
+                    }
+                    [pscustomobject]@{
+                        Status       = [string]$reply.Status
+                        ResponseTime = [int]$reply.RoundtripTime
+                        TTL          = $ttl
+                    }
+                } catch {
+                    [pscustomobject]@{
+                        Status       = 'Failed'
+                        ResponseTime = -1
+                        TTL          = -1
+                    }
+                }
+            }
         }
     }
 }
@@ -487,6 +605,8 @@ $htmlContent = @"
                 if (data.includes(currentVal)) {
                     select.value = currentVal;
                 } else {
+                    // El backend ordena las interfaces activas primero.
+                    select.selectedIndex = 0;
                     changeIface();
                 }
             }
@@ -517,30 +637,34 @@ $htmlContent = @"
             const statusDisplay = document.getElementById('statusDisplay');
             const pingOverlay = document.getElementById('pingOverlay');
 
-            if (!data.isConnected) {
-                statusDisplay.innerText = "Desconectado";
-                statusDisplay.style.color = "#ff4d4d";
-                pingOverlay.classList.remove('active');
-            } else if (data.isIdentifying) {
-                statusDisplay.innerText = "Identificando...";
-                statusDisplay.style.color = "#ffcc00";
-                pingOverlay.classList.add('active');
-            } else if (data.hasInternet) {
+            // ESTADO: depende únicamente del acceso a Internet de la interfaz seleccionada.
+            if (data.hasInternet) {
                 statusDisplay.innerText = "Conectado";
                 statusDisplay.style.color = "#00e676";
-                pingOverlay.classList.remove('active');
             } else {
-                statusDisplay.innerText = "Sin Internet";
-                statusDisplay.style.color = "#ffcc00";
+                statusDisplay.innerText = "Desconectado";
+                statusDisplay.style.color = "#ff4d4d";
+            }
+
+            // "Aguarde..." SOLO cuando el PingTarget está en Timeout.
+            if (data.isIdentifying) {
+                pingOverlay.classList.add('active');
+                const remaining = Math.max(0, Math.ceil(data.identifyRemaining));
+                document.querySelector('.overlay-text').innerText =
+                    'Aguarde, identificando red... ' + remaining + 's';
+            } else {
                 pingOverlay.classList.remove('active');
             }
 
             const pingValDisplay = document.getElementById('pingVal');
             if (data.pingMs !== null && data.pingMs >= 0) {
-                pingValDisplay.innerText = data.pingMs + ' ms';
+                const ttlText = (data.pingTTL !== null && data.pingTTL >= 0)
+                    ? ' | TTL ' + data.pingTTL
+                    : '';
+                pingValDisplay.innerText = data.pingMs + ' ms' + ttlText;
                 pingValDisplay.style.color = data.pingMs > 120 ? '#ffcc00' : '#00e676';
             } else {
-                pingValDisplay.innerText = 'Timeout';
+                pingValDisplay.innerText = 'Timeout | TTL --';
                 pingValDisplay.style.color = '#ff4d4d';
             }
 
@@ -591,9 +715,17 @@ try {
                     $res.OutputStream.Write($buffer, 0, $buffer.Length)
                 }
                 elseif ($url -eq "/api/interfaces") {
-                    $ifaces = [System.Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces() | 
-                        Where-Object { $_.OperationalStatus -eq 'Up' -and $_.NetworkInterfaceType -ne 'Loopback' } | 
-                        Select-Object -ExpandProperty Name
+                    # Usar NetConnectionID de Win32_NetworkAdapter porque es
+                    # el nombre que Windows muestra en "Conexiones de red".
+                    # Esto evita mostrar adaptadores virtuales internos como
+                    # "Conexión de área local* 1/2" cuando no aparecen en ncpa.cpl.
+                    $ifaces = Get-CimInstance Win32_NetworkAdapter -ErrorAction SilentlyContinue |
+                        Where-Object {
+                            $_.NetConnectionID -and
+                            $_.NetConnectionID.Trim() -ne ""
+                        } |
+                        Sort-Object @{Expression={ if ($_.NetConnectionStatus -eq 2) { 0 } else { 1 } }}, NetConnectionID |
+                        Select-Object -ExpandProperty NetConnectionID -Unique
 
                     $json = $ifaces | ConvertTo-Json
                     if (-not $json) { $json = "[]" }
@@ -622,15 +754,43 @@ try {
                     $res.OutputStream.Write($buffer, 0, $buffer.Length)
                 }
                 elseif ($url -eq "/api/set-ping-target") {
-                    $global:PingTarget = $req.QueryString["ip"]
+                    $newTarget = $req.QueryString["ip"]
+
+                    if ($null -ne $global:PingJob) {
+                        Remove-Job -Job $global:PingJob -Force -ErrorAction SilentlyContinue
+                        $global:PingJob = $null
+                    }
+
+                    $global:PingTarget = $newTarget
+                    $global:PingTimeMs = -1
+                    $global:PingTTL = -1
+                    $global:IsIdentifying = $false
+                    $global:IdentifyUntil = $null
+                    $global:PingTimeoutEpisode = $false
+
                     $buffer = [System.Text.Encoding]::UTF8.GetBytes('{"status":"ok"}')
                     $res.ContentType = "application/json"
                     $res.OutputStream.Write($buffer, 0, $buffer.Length)
                 }
                 elseif ($url -eq "/api/set-iface") {
                     $global:CurrentIfaceName = $req.QueryString["name"]
+
+                    $adapter = Get-CimInstance Win32_NetworkAdapter -ErrorAction SilentlyContinue |
+                        Where-Object { $_.NetConnectionID -eq $global:CurrentIfaceName } |
+                        Select-Object -First 1
+
+                    if ($adapter) {
+                        $global:CurrentIfaceIndex = [int]$adapter.InterfaceIndex
+                    } else {
+                        $global:CurrentIfaceIndex = -1
+                    }
+
                     $global:RxMbps = 0.0
                     $global:PrevBytes = 0
+                    $global:InternetCheckAt = [DateTime]::MinValue
+                    $global:IsIdentifying = $false
+                    $global:IdentifyUntil = $null
+                    $global:PingTimeoutEpisode = $false
                     
                     Fast-Update-Metrics
 
@@ -639,13 +799,20 @@ try {
                     $res.OutputStream.Write($buffer, 0, $buffer.Length)
                 }
                 elseif ($url -eq "/api/data") {
+                    $identifyRemaining = 0
+                    if ($global:IsIdentifying -and $null -ne $global:IdentifyUntil) {
+                        $identifyRemaining = [math]::Max(0, ($global:IdentifyUntil - [DateTime]::Now).TotalSeconds)
+                    }
+
                     $data = @{
                         rxMbps = $global:RxMbps
                         linkSpeed = $global:LinkSpeed
                         isConnected = $global:IsConnected
                         hasInternet = $global:HasInternet
                         isIdentifying = $global:IsIdentifying
+                        identifyRemaining = $identifyRemaining
                         pingMs = $global:PingTimeMs
+                        pingTTL = $global:PingTTL
                     }
                     $json = $data | ConvertTo-Json
                     $buffer = [System.Text.Encoding]::UTF8.GetBytes($json)
